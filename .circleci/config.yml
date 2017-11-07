@@ -1,0 +1,75 @@
+version: 2
+jobs:
+  build:
+    environment:
+      - USER: circleci
+      - AWS_DEFAULT_REGION: us-east-2
+    docker:
+      - image: circleci/python:2.7
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-test-deps-{{ arch }}-{{ .Branch }}-{{ checksum "tests/requirements.txt" }}
+            - v1-test-deps-{{ arch }}-{{ .Branch }}-{{ checksum "requirements.txt" }}
+      - run:
+          name: Setup Packer build environment
+          command: |
+            python -m virtualenv ~/venv
+            . ~/venv/bin/activate
+            pip install -r requirements.txt
+            curl https://releases.hashicorp.com/packer/1.1.1/packer_1.1.1_linux_amd64.zip > /tmp/packer.zip
+            unzip /tmp/packer.zip
+            sudo mv packer /usr/local/bin
+      - run:
+          name: Validate Packer template
+          command: |
+            . ~/venv/bin/activate
+            packer validate template.json
+      - run:
+          name: Build Packer image
+          command: |
+            . ~/venv/bin/activate
+            packer build template.json
+      - store_artifacts:
+          path: packer-manifest.json
+      - run:
+          name: Setup test environment dependencies
+          command: |
+            . ~/venv/bin/activate
+            pip install -r tests/requirements.txt
+      - save_cache:
+          key: v1-test-deps-{{ arch }}-{{ .Branch }}-{{ checksum "tests/requirements.txt" }}
+          paths:
+            - ~/venv
+      - run:
+          name: Verify built image
+          command: |
+            . ~/venv/bin/activate
+            export AMI_ID=$(cat packer-manifest.json | jq -r '.builds[].artifact_id' | cut -d\: -f2)
+            py.test -v tests --junit-xml=/tmp/test-results.xml
+      - store_test_results:
+          path: /tmp/test-results.xml
+      - store_artifacts:
+          path: /tmp/test-results.xml
+      - run:
+          name: Mark built image as verified
+          command: |
+            . ~/venv/bin/activate
+            export AMI_ID=$(cat packer-manifest.json | jq -r '.builds[].artifact_id' | cut -d\: -f2)
+            aws ec2 create-tags --resources $AMI_ID --tags Key=Verified,Value=True --region $AWS_DEFAULT_REGION
+workflows:
+  version: 2
+  commit:
+    jobs:
+      - build
+  monthly:
+    triggers:
+      - schedule:
+          cron: "0 13 1 * *"
+          filters:
+            branches:
+              only:
+                - master
+    jobs:
+      - build

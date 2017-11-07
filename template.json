@@ -1,0 +1,70 @@
+{
+  "variables": {
+    "revision": "{{ env `CIRCLE_SHA1` }}",
+    "ami_name": "examplecorp/images/appserver-{{ timestamp }}",
+    "ami_description": "ExampleCorp AppServer Image",
+    "region": "{{ env `AWS_DEFAULT_REGION` }}",
+    "instance_type": "m4.large",
+    "ssh_username": "ubuntu"
+  },
+  "builders": [
+    {
+      "type": "amazon-ebs",
+      "encrypt_boot": false,
+      "ami_name": "{{ user `ami_name` }}",
+      "region": "{{ user `region` }}",
+      "source_ami_filter": {
+        "filters": {
+          "root-device-type": "ebs",
+          "virtualization-type": "hvm",
+          "name": "*examplecorp/images/base-server-*",
+          "tag:Verified": "True"
+        },
+        "most_recent": true
+      },
+      "ssh_username": "{{ user `ssh_username` }}",
+      "instance_type": "{{ user `instance_type` }}",
+      "ami_description": "{{ user `ami_description` }}",
+      "tags": {
+        "Name": "{{ user `ami_name` }}",
+        "Platform": "Ubuntu",
+        "OS_Version": "16.04",
+        "Revision": "{{ user `revision` }}"
+      }
+    }
+  ],
+  "provisioners": [
+    {
+      "pause_before": "90s",
+      "type": "shell",
+      "inline": [
+        "while [ ! -f /var/lib/cloud/instance/boot-finished ]; do echo 'Waiting for cloud-init to complete...'; sleep 10; done"
+      ]
+    },
+    {
+      "type": "shell-local",
+      "command": "ansible-galaxy install -r {{ template_dir }}/requirements.yml -f"
+    },
+    {
+      "type": "ansible",
+      "playbook_file": "{{ template_dir }}/provisioning-playbook.yml",
+      "ansible_env_vars": [
+        "ANSIBLE_VAULT_PASSWORD_FILE={{ template_dir }}/bin/ansible-vault-credentials-from-env.sh"
+      ],
+      "extra_arguments": [
+        "--become"
+      ]
+    },
+    {
+      "type": "shell",
+      "script": "{{ template_dir }}/bin/cleanup-image.sh"
+    }
+  ],
+  "post-processors": [
+    {
+      "type": "manifest",
+      "output": "packer-manifest.json",
+      "strip_path": true
+    }
+  ]
+}

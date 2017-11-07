@@ -1,0 +1,3 @@
+- src: git@github.com:jharley/ansible-example-appserver.git
+  scm: git
+  version: master
